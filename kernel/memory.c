@@ -1,11 +1,12 @@
-
 #include "memory.h"
+#include <linux/mm.h>
 #include <linux/highmem.h>
 #include <linux/slab.h>
 #include <linux/kprobes.h>
 #include <linux/uaccess.h>
 #include <linux/sched/mm.h>
 
+// Глобальный указатель для поиска скрытых функций
 typedef int (*valid_phys_addr_range_t)(phys_addr_t addr, size_t size);
 static valid_phys_addr_range_t g_valid_phys_addr_range = NULL;
 
@@ -23,9 +24,10 @@ bool resolve_kernel_symbols(void) {
     return true; 
 }
 
-static struct page* v2p(struct mm_struct *mm, uintptr_t va, phys_addr_t *pa) {
-    pgd_t *pgd; p4d_t *p4d; pud_t *pud; pmd_t *pmd; pte_t *pte;
-    struct page *pg;
+// Безопасный перевод виртуального адреса процесса в физическую страницу
+static struct page* get_process_page(struct mm_struct *mm, uintptr_t va, phys_addr_t *pa) {
+    pgd_t *pgd; p4d_t *p4d; pud_t *pud; pmd_t *pmd; pte_t *ptep, pte;
+    struct page *page = NULL;
 
     pgd = pgd_offset(mm, va);
     if (pgd_none(*pgd) || pgd_bad(*pgd)) return NULL;
@@ -35,13 +37,21 @@ static struct page* v2p(struct mm_struct *mm, uintptr_t va, phys_addr_t *pa) {
     if (pud_none(*pud) || pud_bad(*pud)) return NULL;
     pmd = pmd_offset(pud, va);
     if (pmd_none(*pmd) || pmd_bad(*pmd)) return NULL;
-    pte = pte_offset_kernel(pmd, va);
-    if (!pte || !pte_present(*pte)) return NULL;
 
-    pg = pte_page(*pte);
-    if (!pg || !page_ref_count(pg)) return NULL;
-    if (pa) *pa = page_to_phys(pg) + (va & ~PAGE_MASK);
-    return pg;
+    // Безопасное получение PTE с использованием маппинга для пользовательских процессов
+    ptep = pte_offset_map(pmd, va);
+    if (!ptep) return NULL;
+    pte = *ptep;
+
+    if (pte_present(pte)) {
+        unsigned long pfn = pte_pfn(pte);
+        if (pfn_valid(pfn)) {
+            page = pfn_to_page(pfn);
+            if (pa) *pa = (phys_addr_t)(pfn << PAGE_SHIFT) + (va & ~PAGE_MASK);
+        }
+    }
+    pte_unmap(ptep);
+    return page;
 }
 
 bool read_process_memory(pid_t pid, uintptr_t addr, void *buffer, size_t size) {
@@ -58,31 +68,39 @@ bool read_process_memory(pid_t pid, uintptr_t addr, void *buffer, size_t size) {
     mm = get_task_mm(task);
     if (!mm) { put_task_struct(task); put_pid(pid_struct); return false; }
 
-    mmap_read_lock(mm);
+    // Защищаем память процесса от изменений во время чтения
+    if (!mmap_read_trylock(mm)) {
+        mmput(mm); put_task_struct(task); put_pid(pid_struct);
+        return false;
+    }
+
     while (done < size) {
-        phys_addr_t pa;
         struct page *pg;
-        void *mapped;
+        void *kernel_addr;
+        phys_addr_t pa;
         uintptr_t curr_va = addr + done;
         size_t off = curr_va & ~PAGE_MASK;
         size_t chunk = min_t(size_t, PAGE_SIZE - off, size - done);
 
-        pg = v2p(mm, curr_va, &pa);
+        pg = get_process_page(mm, curr_va, &pa);
         if (!pg) { result = false; break; }
-        
+
+        // Дополнительная проверка диапазона, если символ найден
         if (g_valid_phys_addr_range && !g_valid_phys_addr_range(pa, chunk)) {
             result = false; break;
         }
 
-        // В ядре 5.10 на arm64 используем page_address
-        mapped = page_address(pg);
-        if (!mapped) { result = false; break; }
+        // На arm64 page_address — самый быстрый и безопасный способ
+        kernel_addr = page_address(pg);
+        if (!kernel_addr) { result = false; break; }
 
-        if (copy_to_user((char __user *)buffer + done, (char *)mapped + off, chunk)) {
+        // Копируем данные в буфер пользователя
+        if (copy_to_user((char __user *)buffer + done, (char *)kernel_addr + off, chunk)) {
             result = false; break;
         }
         done += chunk;
     }
+
     mmap_read_unlock(mm);
     mmput(mm);
     put_task_struct(task);
@@ -104,26 +122,32 @@ bool write_process_memory(pid_t pid, uintptr_t addr, void *buffer, size_t size) 
     mm = get_task_mm(task);
     if (!mm) { put_task_struct(task); put_pid(pid_struct); return false; }
 
-    mmap_read_lock(mm);
+    if (!mmap_read_trylock(mm)) {
+        mmput(mm); put_task_struct(task); put_pid(pid_struct);
+        return false;
+    }
+
     while (done < size) {
-        phys_addr_t pa;
         struct page *pg;
-        void *mapped;
+        void *kernel_addr;
+        phys_addr_t pa;
         uintptr_t curr_va = addr + done;
         size_t off = curr_va & ~PAGE_MASK;
         size_t chunk = min_t(size_t, PAGE_SIZE - off, size - done);
 
-        pg = v2p(mm, curr_va, &pa);
+        pg = get_process_page(mm, curr_va, &pa);
         if (!pg) { result = false; break; }
 
-        mapped = page_address(pg);
-        if (!mapped) { result = false; break; }
+        kernel_addr = page_address(pg);
+        if (!kernel_addr) { result = false; break; }
 
-        if (copy_from_user((char *)mapped + off, (char __user *)buffer + done, chunk)) {
+        // Запись данных из буфера пользователя в память процесса
+        if (copy_from_user((char *)kernel_addr + off, (char __user *)buffer + done, chunk)) {
             result = false; break;
         }
         done += chunk;
     }
+
     mmap_read_unlock(mm);
     mmput(mm);
     put_task_struct(task);
