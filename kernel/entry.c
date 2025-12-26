@@ -83,6 +83,11 @@ static struct miscdevice misc = {
 static int __init driver_entry(void)
 {
     int ret;
+    if (!resolve_kernel_symbols()) {
+        printk(KERN_ERR "[-] JiangNight: Failed to resolve valid_phys_addr_range");
+        // Можно вернуть 0, если проверка не критична, или ошибку:
+        // return -ENXIO; 
+    }
     printk(KERN_INFO "[+] JiangNight driver loaded\n");
     ret = misc_register(&misc);
     return ret;
