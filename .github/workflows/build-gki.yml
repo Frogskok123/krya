@@ -26,7 +26,6 @@ jobs:
       run: |
         wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
         unzip -q android-ndk-r25c-linux.zip
-        # Добавляем в PATH binutils и clang
         echo "$GITHUB_WORKSPACE/android-ndk-r25c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
         echo "$GITHUB_WORKSPACE/android-ndk-r25c/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
@@ -35,15 +34,9 @@ jobs:
         echo "ARCH=arm64" >> $GITHUB_ENV
         echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
         echo "CC=clang" >> $GITHUB_ENV
-        echo "LD=ld.lld" >> $GITHUB_ENV
-        echo "AR=llvm-ar" >> $GITHUB_ENV
-        echo "NM=llvm-nm" >> $GITHUB_ENV
-        echo "STRIP=llvm-strip" >> $GITHUB_ENV
-        echo "OBJCOPY=llvm-objcopy" >> $GITHUB_ENV
-        echo "OBJDUMP=llvm-objdump" >> $GITHUB_ENV
-        echo "READELF=llvm-readelf" >> $GITHUB_ENV
-        echo "HOSTCC=clang" >> $GITHUB_ENV
-        echo "HOSTCXX=clang++" >> $GITHUB_ENV
+        # КРИТИЧНО: включаем LLVM toolchain
+        echo "LLVM=1" >> $GITHUB_ENV
+        echo "LLVM_IAS=1" >> $GITHUB_ENV
 
     - name: Clone GKI kernel
       run: |
@@ -75,8 +68,8 @@ jobs:
     - name: Configure kernel
       run: |
         cd gki-kernel
-        # Генерируем конфиг, указывая HOSTCC явно
-        make O=out gki_defconfig HOSTCC=clang
+        # Используем clang для host-компиляции
+        make O=out HOSTCC=clang gki_defconfig
 
     - name: Enable module config
       run: |
