@@ -9,7 +9,6 @@ env:
   ARCH: arm64
   CROSS_COMPILE: aarch64-linux-android-
   ANDROID_NDK_PATH: ${{ github.workspace }}/android-ndk-r25c/toolchains/llvm/prebuilt/linux-x86_64/bin
-  PATH: ${{ github.workspace }}/android-ndk-r25c/toolchains/llvm/prebuilt/linux-x86_64/bin:${{ github.workspace }}/android-ndk-r25c/prebuilt/linux-x86_64/bin:${{ env.PATH }}
 
 jobs:
   build:
@@ -37,16 +36,16 @@ jobs:
         echo "$ANDROID_NDK_PATH" >> $GITHUB_PATH
         echo "$GITHUB_WORKSPACE/android-ndk-r25c/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
-    - name: Clone GKI kernel
-      run: |
-        git clone --depth 1 --branch android12-5.10 https://android.googlesource.com/kernel/common gki-kernel
-
     - name: Configure environment
       run: |
         echo "ARCH=arm64" >> $GITHUB_ENV
         echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
         echo "CC=clang" >> $GITHUB_ENV
         echo "LD=ld.lld" >> $GITHUB_ENV
+
+    - name: Clone GKI kernel
+      run: |
+        git clone --depth 1 --branch android12-5.10 https://android.googlesource.com/kernel/common gki-kernel
 
     - name: Integrate driver into kernel tree
       run: |
