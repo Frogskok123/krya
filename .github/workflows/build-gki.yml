@@ -5,6 +5,12 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+env:
+  ARCH: arm64
+  CROSS_COMPILE: aarch64-linux-android-
+  ANDROID_NDK_PATH: ${{ github.workspace }}/android-ndk-r25c/toolchains/llvm/prebuilt/linux-x86_64/bin
+  PATH: ${{ github.workspace }}/android-ndk-r25c/toolchains/llvm/prebuilt/linux-x86_64/bin:${{ github.workspace }}/android-ndk-r25c/prebuilt/linux-x86_64/bin:${{ env.PATH }}
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -19,29 +25,35 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential bc bison flex libssl-dev \
-                                python3 python3-pip git wget lld
+                                python3 python3-pip git wget lld llvm
 
     - name: Setup Android NDK
       run: |
         wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
         unzip -q android-ndk-r25c-linux.zip
-        echo "$GITHUB_WORKSPACE/android-ndk-r25c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
-    - name: Clone GKI kernel 5.10.136-android12
+    - name: Add NDK to PATH
+      run: |
+        echo "$ANDROID_NDK_PATH" >> $GITHUB_PATH
+        echo "$GITHUB_WORKSPACE/android-ndk-r25c/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+
+    - name: Clone GKI kernel
       run: |
         git clone --depth 1 --branch android12-5.10 https://android.googlesource.com/kernel/common gki-kernel
-        cd gki-kernel
-        git rev-parse HEAD
+
+    - name: Configure environment
+      run: |
+        echo "ARCH=arm64" >> $GITHUB_ENV
+        echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
+        echo "CC=clang" >> $GITHUB_ENV
+        echo "LD=ld.lld" >> $GITHUB_ENV
 
     - name: Integrate driver into kernel tree
       run: |
         cd gki-kernel
         mkdir -p drivers/khack
-        
-        # Копируем исходники
         cp $GITHUB_WORKSPACE/driver-src/kernel/* drivers/khack/
         
-        # Создаем Kconfig (с отступом EOF)
         cat > drivers/khack/Kconfig <<-'EOF'
         config KERNEL_HACK
             tristate "JiangNight Memory Hack Driver"
@@ -51,38 +63,24 @@ jobs:
               Provides /dev/JiangNight interface.
         EOF
         
-        # Создаем Makefile (с отступом EOF)
         cat > drivers/khack/Makefile <<-'EOF'
         obj-$(CONFIG_KERNEL_HACK) += jiangnight.o
         jiangnight-objs := entry.o memory.o process.o
         EOF
         
-        # Интегрируем в ядро
         echo 'source "drivers/khack/Kconfig"' >> drivers/Kconfig
         echo 'obj-$(CONFIG_KERNEL_HACK) += khack/' >> drivers/Makefile
 
     - name: Configure kernel
       run: |
         cd gki-kernel
-        export ARCH=arm64
-        export CROSS_COMPILE=aarch64-linux-android-
         make O=out gki_defconfig
         echo "CONFIG_KERNEL_HACK=m" >> out/.config
 
     - name: Build module
       run: |
         cd gki-kernel
-        export ARCH=arm64
-        export CROSS_COMPILE=aarch64-linux-android-
         make O=out -j$(nproc) drivers/khack/
-
-    - name: Sign module
-      run: |
-        cd gki-kernel
-        out/scripts/sign-file sha256 \
-          out/certs/signing_key.pem \
-          out/certs/signing_key.x509 \
-          out/drivers/khack/jiangnight.ko || true
 
     - name: Upload module
       uses: actions/upload-artifact@v4
