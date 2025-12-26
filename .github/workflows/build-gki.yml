@@ -1,0 +1,92 @@
+name: Build GKI 5.10.136 Kernel Module
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Checkout driver source
+      uses: actions/checkout@v4
+      with:
+        path: driver-src
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential bc bison flex libssl-dev \
+                                python3 python3-pip git wget lld
+
+    - name: Setup Android NDK
+      run: |
+        wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+        unzip -q android-ndk-r25c-linux.zip
+        echo "$GITHUB_WORKSPACE/android-ndk-r25c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
+
+    - name: Clone GKI kernel 5.10.136-android12
+      run: |
+        git clone --depth 1 --branch android12-5.10 https://android.googlesource.com/kernel/common gki-kernel
+        cd gki-kernel
+        git rev-parse HEAD
+
+    - name: Integrate driver into kernel tree
+      run: |
+        cd gki-kernel
+        mkdir -p drivers/khack
+        
+        # Копируем исходники
+        cp $GITHUB_WORKSPACE/driver-src/kernel/* drivers/khack/
+        
+        # Создаем Kconfig
+        cat > drivers/khack/Kconfig << 'EOF'
+config KERNEL_HACK
+    tristate "JiangNight Memory Hack Driver"
+    default m
+    help
+      Android kernel driver for memory operations.
+      Provides /dev/JiangNight interface.
+EOF
+        
+        # Создаем Makefile (один модуль)
+        cat > drivers/khack/Makefile << 'EOF'
+obj-$(CONFIG_KERNEL_HACK) += jiangnight.o
+jiangnight-objs := entry.o memory.o process.o
+EOF
+        
+        # Интегрируем в ядро
+        echo 'source "drivers/khack/Kconfig"' >> drivers/Kconfig
+        echo 'obj-$(CONFIG_KERNEL_HACK) += khack/' >> drivers/Makefile
+
+    - name: Configure kernel
+      run: |
+        cd gki-kernel
+        export ARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-android-
+        make O=out gki_defconfig
+        echo "CONFIG_KERNEL_HACK=m" >> out/.config
+
+    - name: Build module
+      run: |
+        cd gki-kernel
+        export ARCH=arm64
+        export CROSS_COMPILE=aarch64-linux-android-
+        make O=out -j$(nproc) drivers/khack/
+
+    - name: Sign module (for enforce boot)
+      run: |
+        cd gki-kernel/out/drivers/khack
+        # Подпись ключом ядра
+        $GITHUB_WORKSPACE/gki-kernel/scripts/sign-file sha256 \
+          $GITHUB_WORKSPACE/gki-kernel/out/certs/signing_key.pem \
+          $GITHUB_WORKSPACE/gki-kernel/out/certs/signing_key.x509 \
+          jiangnight.ko || true
+
+    - name: Upload module
+      uses: actions/upload-artifact@v4
+      with:
+        name: jiangnight-5.10.136.ko
+        path: gki-kernel/out/drivers/khack/jiangnight.ko
