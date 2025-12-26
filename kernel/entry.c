@@ -6,7 +6,7 @@
 #include "memory.h"
 #include "process.h"
 
-#define DEVICE_NAME "JiangNight"
+#define DEVICE_NAME "mtk_tersafe"
 
 static int dispatch_open(struct inode *node, struct file *file)
 {
