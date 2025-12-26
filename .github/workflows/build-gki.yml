@@ -1,14 +1,10 @@
+
 name: Build GKI 5.10.136 Kernel Module
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
-
-env:
-  ARCH: arm64
-  CROSS_COMPILE: aarch64-linux-android-
-  ANDROID_NDK_PATH: ${{ github.workspace }}/android-ndk-r25c/toolchains/llvm/prebuilt/linux-x86_64/bin
 
 jobs:
   build:
@@ -30,18 +26,24 @@ jobs:
       run: |
         wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
         unzip -q android-ndk-r25c-linux.zip
-
-    - name: Add NDK to PATH
-      run: |
-        echo "$ANDROID_NDK_PATH" >> $GITHUB_PATH
+        # Добавляем в PATH binutils и clang
+        echo "$GITHUB_WORKSPACE/android-ndk-r25c/toolchains/llvm/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
         echo "$GITHUB_WORKSPACE/android-ndk-r25c/prebuilt/linux-x86_64/bin" >> $GITHUB_PATH
 
-    - name: Configure environment
+    - name: Setup kernel build environment
       run: |
         echo "ARCH=arm64" >> $GITHUB_ENV
         echo "CROSS_COMPILE=aarch64-linux-android-" >> $GITHUB_ENV
         echo "CC=clang" >> $GITHUB_ENV
         echo "LD=ld.lld" >> $GITHUB_ENV
+        echo "AR=llvm-ar" >> $GITHUB_ENV
+        echo "NM=llvm-nm" >> $GITHUB_ENV
+        echo "STRIP=llvm-strip" >> $GITHUB_ENV
+        echo "OBJCOPY=llvm-objcopy" >> $GITHUB_ENV
+        echo "OBJDUMP=llvm-objdump" >> $GITHUB_ENV
+        echo "READELF=llvm-readelf" >> $GITHUB_ENV
+        echo "HOSTCC=clang" >> $GITHUB_ENV
+        echo "HOSTCXX=clang++" >> $GITHUB_ENV
 
     - name: Clone GKI kernel
       run: |
@@ -73,7 +75,12 @@ jobs:
     - name: Configure kernel
       run: |
         cd gki-kernel
-        make O=out gki_defconfig
+        # Генерируем конфиг, указывая HOSTCC явно
+        make O=out gki_defconfig HOSTCC=clang
+
+    - name: Enable module config
+      run: |
+        cd gki-kernel
         echo "CONFIG_KERNEL_HACK=m" >> out/.config
 
     - name: Build module
@@ -86,4 +93,3 @@ jobs:
       with:
         name: jiangnight-5.10.136.ko
         path: gki-kernel/out/drivers/khack/jiangnight.ko
-
