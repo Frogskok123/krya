@@ -10,7 +10,24 @@
 #include <asm/io.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
+#include <linux/kprobes.h>
 
+typedef int (*valid_phys_addr_range_t)(phys_addr_t addr, size_t size);
+static valid_phys_addr_range_t g_valid_phys_addr_range = NULL;
+
+static unsigned long lookup_symbol(const char *name) {
+    struct kprobe kp = { .symbol_name = name };
+    unsigned long addr;
+    if (register_kprobe(&kp) < 0) return 0;
+    addr = (unsigned long)kp.addr;
+    unregister_kprobe(&kp);
+    return addr;
+}
+
+bool resolve_kernel_symbols(void) {
+    g_valid_phys_addr_range = (valid_phys_addr_range_t)lookup_symbol("valid_phys_addr_range");
+    return g_valid_phys_addr_range != NULL;
+}
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 61))
 phys_addr_t translate_linear_address(struct mm_struct *mm, uintptr_t va)
 {
@@ -89,7 +106,7 @@ bool read_physical_address(phys_addr_t pa, void *buffer, size_t size)
 {
     void *mapped;
     
-    if (!pfn_valid(__phys_to_pfn(pa)) || !valid_phys_addr_range(pa, size))
+    if (!pfn_valid(__phys_to_pfn(pa)) || (g_valid_phys_addr_range && !g_valid_phys_addr_range(pa, size)))
         return false;
 
     mapped = ioremap_cache(pa, size);
@@ -109,7 +126,7 @@ bool write_physical_address(phys_addr_t pa, void *buffer, size_t size)
 {
     void *mapped;
     
-    if (!pfn_valid(__phys_to_pfn(pa)) || !valid_phys_addr_range(pa, size))
+    if (!pfn_valid(__phys_to_pfn(pa)) || (g_valid_phys_addr_range && !g_valid_phys_addr_range(pa, size)))
         return false;
 
     mapped = ioremap_cache(pa, size);
