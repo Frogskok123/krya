@@ -1,3 +1,4 @@
+
 #include "memory.h"
 #include <linux/highmem.h>
 #include <linux/slab.h>
@@ -73,12 +74,13 @@ bool read_process_memory(pid_t pid, uintptr_t addr, void *buffer, size_t size) {
             result = false; break;
         }
 
-        mapped = kmap_local_page(pg);
+        // В ядре 5.10 на arm64 используем page_address
+        mapped = page_address(pg);
+        if (!mapped) { result = false; break; }
+
         if (copy_to_user((char __user *)buffer + done, (char *)mapped + off, chunk)) {
-            kunmap_local(mapped);
             result = false; break;
         }
-        kunmap_local(mapped);
         done += chunk;
     }
     mmap_read_unlock(mm);
@@ -114,12 +116,12 @@ bool write_process_memory(pid_t pid, uintptr_t addr, void *buffer, size_t size) 
         pg = v2p(mm, curr_va, &pa);
         if (!pg) { result = false; break; }
 
-        mapped = kmap_local_page(pg);
+        mapped = page_address(pg);
+        if (!mapped) { result = false; break; }
+
         if (copy_from_user((char *)mapped + off, (char __user *)buffer + done, chunk)) {
-            kunmap_local(mapped);
             result = false; break;
         }
-        kunmap_local(mapped);
         done += chunk;
     }
     mmap_read_unlock(mm);
