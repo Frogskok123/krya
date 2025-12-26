@@ -80,19 +80,17 @@ static struct miscdevice misc = {
     .fops = &dispatch_functions,
 };
 
-static int __init driver_entry(void)
-{
+// Найти функцию driver_entry и заменить на:
+static int __init driver_entry(void) {
     int ret;
-    if (!resolve_kernel_symbols()) {
-        printk(KERN_ERR "[-] JiangNight: Failed to resolve valid_phys_addr_range");
-        // Можно вернуть 0, если проверка не критична, или ошибку:
-        // return -ENXIO; 
-    }
-    printk(KERN_INFO "[+] JiangNight driver loaded\n");
+    
+    // Инициализация Kprobes для скрытых функций
+    resolve_kernel_symbols();
+
+    printk(KERN_INFO "[+] JiangNight: Fast Kmap Driver Loaded");
     ret = misc_register(&misc);
     return ret;
 }
-
 static void __exit driver_unload(void)
 {
     printk(KERN_INFO "[+] JiangNight driver unloaded\n");
