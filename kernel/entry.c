@@ -85,8 +85,7 @@ static int __init driver_entry(void) {
     return ret;
 }
 static void __exit driver_unload(void)
-{
-    remove_hw_breakpoint(); // КРИТИЧНО: предотвращает Panic при выгрузке модуля
+{ // КРИТИЧНО: предотвращает Panic при выгрузке модуля
     printk(KERN_INFO "[+] JiangNight driver unloaded\n");
     misc_deregister(&misc);
 }
