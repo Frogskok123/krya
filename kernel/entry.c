@@ -51,7 +51,17 @@ static long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsi
             if (copy_to_user((void __user *)arg, &mb, sizeof(mb)) != 0)
                 return -EFAULT;
             break;
+case OP_SET_HW_BP: {
+    HW_BREAKPOINT bp;
+    if (copy_from_user(&bp, (void __user *)arg, sizeof(bp))) return -EFAULT;
+    remove_hw_breakpoint(); // Удаляем старый перед установкой нового
+    if (!set_hw_breakpoint(bp.pid, bp.addr, bp.type, bp.len)) return -EIO;
+    break;
+}
 
+case OP_DEL_HW_BP:
+    remove_hw_breakpoint();
+    break
         default:
             return -EINVAL;
     }
@@ -85,6 +95,7 @@ static int __init driver_entry(void) {
 }
 static void __exit driver_unload(void)
 {
+    remove_hw_breakpoint(); // КРИТИЧНО: предотвращает Panic при выгрузке модуля
     printk(KERN_INFO "[+] JiangNight driver unloaded\n");
     misc_deregister(&misc);
 }
