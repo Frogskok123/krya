@@ -8,55 +8,9 @@
 #include <linux/perf_event.h>
 #include <linux/hw_breakpoint.h>
 
-static struct perf_event *jiang_hbp = NULL;
 
-// Обработчик срабатывания (выполняется в контексте прерывания)
-static void jiang_hbp_handler(struct perf_event *bp, 
-                             struct perf_sample_data *data, 
-                             struct pt_regs *regs) 
-{
-    // Безопасный вывод в лог (dmesg)
-    pr_info("JiangNight: HWBP Hit! Addr: 0x%lx, PC: 0x%llx\n", 
-            (unsigned long)bp->attr.bp_addr, regs->pc);
-}
 
-bool set_hw_breakpoint(pid_t pid, uintptr_t addr, int type, int len) {
-    struct perf_event_attr attr;
-    struct task_struct *task;
-    struct pid *pid_struct;
 
-    pid_struct = find_get_pid(pid);
-    if (!pid_struct) return false;
-    task = get_pid_task(pid_struct, PIDTYPE_PID);
-    put_pid(pid_struct);
-    if (!task) return false;
-
-    hw_breakpoint_init(&attr);
-    attr.bp_addr = addr;
-    attr.bp_len = (len == 8) ? HW_BREAKPOINT_LEN_8 : HW_BREAKPOINT_LEN_4;
-    
-    if (type == 1) attr.bp_type = HW_BREAKPOINT_X;
-    else if (type == 2) attr.bp_type = HW_BREAKPOINT_W;
-    else attr.bp_type = HW_BREAKPOINT_RW;
-
-    // Создание события для конкретного процесса на всех ядрах Dimensity 8100
-    jiang_hbp = perf_event_create_kernel_counter(&attr, -1, task, jiang_hbp_handler, NULL);
-    put_task_struct(task);
-
-    if (IS_ERR(jiang_hbp)) {
-        pr_err("JiangNight: Failed to set BP: %ld\n", PTR_ERR(jiang_hbp));
-        jiang_hbp = NULL;
-        return false;
-    }
-    return true;
-}
-
-void remove_hw_breakpoint(void) {
-    if (jiang_hbp) {
-        perf_event_release_kernel(jiang_hbp);
-        jiang_hbp = NULL;
-    }
-}
 
 // Глобальный указатель для поиска скрытых функций
 typedef int (*valid_phys_addr_range_t)(phys_addr_t addr, size_t size);
