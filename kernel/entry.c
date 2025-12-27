@@ -51,19 +51,7 @@ static long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsi
             if (copy_to_user((void __user *)arg, &mb, sizeof(mb)) != 0)
                 return -EFAULT;
             break;
-case OP_SET_HW_BP: {
-    HW_BREAKPOINT bp;
-    if (copy_from_user(&bp, (void __user *)arg, sizeof(bp))) return -EFAULT;
-    
-    remove_hw_breakpoint();
-    
-    if (!set_hw_breakpoint(bp.pid, bp.addr, bp.type, bp.len)) return -EIO;
-    break; // Не забудь ;
-}
 
-case OP_DEL_HW_BP:
-    remove_hw_breakpoint();
-    break; // И здесь тоже
 
         default:
             return -EINVAL;
