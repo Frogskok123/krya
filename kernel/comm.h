@@ -22,12 +22,4 @@ enum OPERATIONS {
     OP_MODULE_BASE = 0x803,
 };
 // Добавь в конец файла
-typedef struct _HW_BREAKPOINT {
-    pid_t pid;
-    uintptr_t addr;
-    int type; // 1 - Execute, 2 - Write, 3 - Read/Write
-    int len;  // 4 или 8
-} HW_BREAKPOINT, *PHW_BREAKPOINT;
 
-#define OP_SET_HW_BP 0x804
-#define OP_DEL_HW_BP 0x805
