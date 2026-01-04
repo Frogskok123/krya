@@ -80,50 +80,45 @@ int hijack_thread_with_args(THREAD_HIJACK_ARGS *ctx) {
 }
 
 
-static uintptr_t get_task_tls(pid_t pid) {
+// 1. Добавь в инклуды (если нет)
+#include <asm/sysreg.h>
+
+// 2. Замени функцию get_task_tls (или добавь, если её нет)
+static uintptr_t get_task_tls(struct task_struct *task) {
+    if (!task) return 0;
+#ifdef CONFIG_ARM64
+    // Попытка доступа для разных версий ядра
+    #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+        return task->thread.uw.tp_value;
+    #else
+        return task->thread.tp_value;
+    #endif
+#else
+    return 0;
+#endif
+}
+
+// 3. Обнови solve_tls_chain (исправлена сигнатура и логика)
+static uintptr_t solve_tls_chain(pid_t pid, uintptr_t offset1, uintptr_t offset2) {
     struct task_struct *task;
-    uintptr_t tp_value = 0;
+    uintptr_t tls_base = 0;
+    uintptr_t context_ptr = 0;
+    uintptr_t final_data = 0;
 
     rcu_read_lock();
     task = pid_task(find_vpid(pid), PIDTYPE_PID);
     if (task) {
-        // Проверка на ARM64, так как tp_value специфичен для архитектуры
-#ifdef CONFIG_ARM64
-        tp_value = task->thread.tp_value;
-#else
-        // Fallback для других архитектур (если нужно)
-        tp_value = 0;
-#endif
+        tls_base = get_task_tls(task);
     }
     rcu_read_unlock();
-    
-    return tp_value;
-}
 
-// Реализация твоей логики read_encrypted_ptr на уровне ядра
-static uintptr_t solve_tls_chain(pid_t pid, uintptr_t offset1, uintptr_t offset2) {
-    uintptr_t tls_addr;
-    uintptr_t context_ptr = 0;
-    uintptr_t real_data = 0;
+    if (!tls_base) return 0;
 
-    // 1. Получаем базовый адрес TLS потока
-    tls_addr = get_task_tls(pid);
-    if (!tls_addr) return 0;
-
-    // 2. Читаем [TLS + 40] -> context_ptr
-    // Используем read_process_memory из memory.h
-    if (!read_process_memory(pid, tls_addr + offset1, &context_ptr, sizeof(context_ptr))) {
-        return 0;
-    }
-
+    if (!read_process_memory(pid, tls_base + offset1, &context_ptr, sizeof(context_ptr))) return 0;
     if (!context_ptr) return 0;
+    if (!read_process_memory(pid, context_ptr + offset2, &final_data, sizeof(final_data))) return 0;
 
-    // 3. Читаем [context_ptr + 0x200] -> real_data (ComponentToWorld или GWorld)
-    if (!read_process_memory(pid, context_ptr + offset2, &real_data, sizeof(real_data))) {
-        return 0;
-    }
-
-    return real_data;
+    return final_data;
 }
 
 
@@ -190,19 +185,16 @@ long dispatch_ioctl(struct file *const file, unsigned int const cmd, unsigned lo
 
     case OP_GET_TLS_CONTEXT: {
         TLS_REQUEST req;
+        uintptr_t off1, off2; // Переменные в начале
         
-        // Копируем запрос от пользователя
         if (copy_from_user(&req, (void __user*)arg, sizeof(req))) 
             return -EFAULT;
 
-        // Если оффсеты не переданы, используем дефолтные из твоего примера (40 и 0x200)
-        uintptr_t off1 = req.base_offset ? req.base_offset : 40;
-        uintptr_t off2 = req.data_offset ? req.data_offset : 0x200;
+        off1 = req.base_offset ? req.base_offset : 40;
+        off2 = req.data_offset ? req.data_offset : 0x200;
 
-        // Выполняем поиск
         req.result = solve_tls_chain(req.pid, off1, off2);
 
-        // Возвращаем результат пользователю
         if (copy_to_user((void __user*)arg, &req, sizeof(req))) 
             return -EFAULT;
         
